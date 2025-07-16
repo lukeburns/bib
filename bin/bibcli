@@ -1,0 +1,957 @@
+#!/usr/bin/env node
+
+const { Command } = require('commander');
+const path = require('path');
+const fs = require('fs');
+const CitationAnalyzer = require('../lib/citation-analyzer');
+const GapAnalyzer = require('../lib/gap-analyzer');
+const APICache = require('../lib/cache');
+
+const program = new Command();
+
+program
+  .name('bibcli')
+  .description('Bibliography management CLI tool')
+  .version('1.0.0');
+
+// Helper function to find files
+function findFile(fileName, searchPaths = ['.', '..']) {
+  for (const searchPath of searchPaths) {
+    const fullPath = path.resolve(searchPath, fileName);
+    if (fs.existsSync(fullPath)) {
+      return fullPath;
+    }
+  }
+  return null;
+}
+
+// Get file paths with defaults
+function getFilePaths(options) {
+  const bibFile = options.bib || findFile('refs.bib') || findFile('references.bib');
+  const texFile = options.tex || findFile('main.tex');
+  
+  if (!bibFile) {
+    console.error('Error: Could not find .bib file. Use --bib to specify path.');
+    process.exit(1);
+  }
+  
+  if (!texFile) {
+    console.error('Error: Could not find .tex file. Use --tex to specify path.');
+    process.exit(1);
+  }
+  
+  return { bibFile, texFile };
+}
+
+// used command  
+program
+  .command('used')
+  .description('List used citations from .bib file')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('-s, --search <query>', 'search used citations')
+  .option('-k, --keys-only', 'show only citation keys')
+  .option('-v, --verbose', 'show detailed information')
+  .action((options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      
+      let used = options.search 
+        ? analyzer.getUsedCitationsList().filter(entry => 
+            entry.key.toLowerCase().includes(options.search.toLowerCase()) ||
+            (entry.title && entry.title.toLowerCase().includes(options.search.toLowerCase())) ||
+            (entry.author && entry.author.toLowerCase().includes(options.search.toLowerCase()))
+          )
+        : analyzer.getUsedCitationsList();
+      
+      if (used.length === 0) {
+        console.log(options.search ? 'No used citations found matching query.' : 'No used citations found.');
+        return;
+      }
+      
+      if (options.keysOnly) {
+        used.forEach(entry => console.log(entry.key));
+      } else if (options.verbose) {
+        used.forEach(entry => {
+          console.log(`${entry.key}`);
+          console.log(`  Type: ${entry.type}`);
+          console.log(`  Title: ${entry.title || 'N/A'}`);
+          console.log(`  Author: ${entry.author || 'N/A'}`);
+          console.log(`  Year: ${entry.year || 'N/A'}`);
+          if (entry.doi) console.log(`  DOI: ${entry.doi}`);
+          console.log('');
+        });
+      } else {
+        // Default format: key - title
+        used.forEach(entry => {
+          const title = entry.title ? ` - ${entry.title}` : '';
+          console.log(`${entry.key}${title}`);
+        });
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// unused command
+program
+  .command('unused')
+  .description('List unused citations from .bib file')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('-s, --search <query>', 'search unused citations')
+  .option('-k, --keys-only', 'show only citation keys')
+  .option('-v, --verbose', 'show detailed information')
+  .action((options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      
+      let unused = options.search 
+        ? analyzer.searchUnused(options.search)
+        : analyzer.getUnusedCitations();
+      
+      if (unused.length === 0) {
+        console.log(options.search ? 'No unused citations found matching query.' : 'No unused citations found.');
+        return;
+      }
+      
+      if (options.keysOnly) {
+        unused.forEach(entry => console.log(entry.key));
+      } else if (options.verbose) {
+        unused.forEach(entry => {
+          console.log(`${entry.key}`);
+          console.log(`  Type: ${entry.type}`);
+          console.log(`  Title: ${entry.title || 'N/A'}`);
+          console.log(`  Author: ${entry.author || 'N/A'}`);
+          console.log(`  Year: ${entry.year || 'N/A'}`);
+          console.log('');
+        });
+      } else {
+        // Default format: key - title
+        unused.forEach(entry => {
+          const title = entry.title ? ` - ${entry.title}` : '';
+          console.log(`${entry.key}${title}`);
+        });
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// status command
+program
+  .command('status')
+  .description('Show citation statistics with Semantic Scholar metrics from cache')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .option('--fresh', 'force fresh Semantic Scholar lookups (slow but complete)')
+  .option('--basic', 'show only basic citation statistics (no Semantic Scholar data)')
+  .action(async (options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const stats = analyzer.getStats();
+      
+      console.log('Citation Statistics:');
+      console.log(`  Total references in .bib: ${stats.totalInBib}`);
+      console.log(`  Used in .tex: ${stats.totalUsed}`);
+      console.log(`  Unused: ${stats.totalUnused}`);
+      if (stats.missingFromBib > 0) {
+        console.log(`  Missing from .bib: ${stats.missingFromBib}`);
+      }
+      
+      // Add Semantic Scholar metrics unless basic mode
+      if (!options.basic) {
+        const GapAnalyzer = require('../lib/gap-analyzer');
+        const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+        
+        if (options.fresh) {
+          // Fresh mode - full metrics
+          console.log('\nSemantic Scholar Metrics:');
+          console.log('  Lookup mode: fresh');
+          
+          const usedCitations = analyzer.getUsedCitationsList();
+          let foundCount = 0;
+          let notFoundCount = 0;
+          let totalCitations = 0;
+          let totalReferences = 0;
+          
+          console.log(`  Analyzing ${usedCitations.length} used citations...\n`);
+          
+          for (const [index, citation] of usedCitations.entries()) {
+            const progress = `[${index + 1}/${usedCitations.length}]`;
+            process.stdout.write(`${progress} Checking: ${citation.key}...`);
+            
+            try {
+              // Force fresh lookup by temporarily clearing cache for this entry
+              const originalGet = gapAnalyzer.semanticScholar.cache.get;
+              gapAnalyzer.semanticScholar.cache.get = () => null;
+              const paper = await gapAnalyzer.semanticScholar.findPaper(citation);
+              gapAnalyzer.semanticScholar.cache.get = originalGet;
+              
+              if (paper) {
+                console.log(' ✓');
+                foundCount++;
+                totalCitations += paper.citationCount || 0;
+                totalReferences += paper.referenceCount || 0;
+              } else {
+                console.log(' ✗ Not found');
+                notFoundCount++;
+              }
+            } catch (error) {
+              console.log(` ✗ Error: ${error.message}`);
+              notFoundCount++;
+            }
+          }
+          
+          // Calculate and show detailed metrics
+          const avgCitationCount = foundCount > 0 ? Math.round(totalCitations / foundCount) : 0;
+          const avgReferences = foundCount > 0 ? Math.round(totalReferences / foundCount) : 0;
+          const foundPercentage = usedCitations.length > 0 ? Math.round((foundCount / usedCitations.length) * 100) : 0;
+          
+          console.log(`\n  Papers found in Semantic Scholar: ${foundCount}/${usedCitations.length} (${foundPercentage}%)`);
+          console.log(`  Papers not found: ${notFoundCount}`);
+          
+          if (foundCount > 0) {
+            console.log(`\n  Citation Impact:`);
+            console.log(`    Total citations received: ${totalCitations.toLocaleString()}`);
+            console.log(`    Average citations per paper: ${avgCitationCount}`);
+            console.log(`    Total references made: ${totalReferences.toLocaleString()}`);
+            console.log(`    Average references per paper: ${avgReferences}`);
+          }
+          
+          const cacheStats = gapAnalyzer.semanticScholar.cache.getStats();
+          console.log(`\n  Cache: ${cacheStats.diskEntries} entries, ${cacheStats.totalSizeKB} KB`);
+          
+        } else {
+          // Default mode - quiet gap analysis with simple progress
+          try {
+            // Create a custom quiet version of gap analysis
+            const usedCitations = analyzer.getUsedCitationsList();
+            
+            // Check if we already have most data cached (for instant results)
+            let cachedCount = 0;
+            for (const citation of usedCitations) {
+              const identifiers = gapAnalyzer.semanticScholar.extractIdentifiers(citation);
+              let hasCached = false;
+              
+              if (identifiers.doi) {
+                const doiPath = `/graph/v1/paper/DOI:${identifiers.doi}?fields=paperId,title,authors,year,citationCount,referenceCount,journal,externalIds,references,references.title,references.authors,references.year,references.citationCount,references.externalIds`;
+                if (gapAnalyzer.semanticScholar.cache.get(doiPath) !== null) hasCached = true;
+              }
+              
+              if (!hasCached && identifiers.title) {
+                const searchPath = `/graph/v1/paper/search?query=${encodeURIComponent(identifiers.title)}&limit=5&fields=paperId,title,authors,year,citationCount,referenceCount,journal,externalIds`;
+                if (gapAnalyzer.semanticScholar.cache.get(searchPath) !== null) hasCached = true;
+              }
+              
+              if (hasCached) cachedCount++;
+            }
+            
+            const cachePercentage = Math.round((cachedCount / usedCitations.length) * 100);
+            const showProgress = cachePercentage < 80; // Only show progress if <80% cached
+            
+            // Inline progress for potential gaps line
+            let processed = 0;
+            const updateProgress = () => {
+              if (!showProgress) return;
+              const percentage = Math.round((processed / usedCitations.length) * 100);
+              process.stdout.write(`\r  Potential Gaps: analyzing... ${percentage}%`);
+            };
+            
+            // Get references for papers (quiet mode)
+            const referencesMap = new Map();
+            
+            // Temporarily disable debug output for clean progress bar
+            const originalLog = console.log;
+            const originalWrite = process.stdout.write;
+            const originalRequestCount = gapAnalyzer.semanticScholar.requestCount;
+            
+            // Silence all console output except our progress bar
+            console.log = () => {};
+            const originalStdoutWrite = process.stdout.write;
+            process.stdout.write = (chunk, encoding, callback) => {
+              // Only allow our progress bar through
+              if (typeof chunk === 'string' && chunk.includes('Progress:')) {
+                return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
+              }
+              // Silence everything else
+              if (typeof callback === 'function') callback();
+              return true;
+            };
+            
+            // Reset request count to prevent debug messages
+            gapAnalyzer.semanticScholar.requestCount = 999;
+            
+            for (const citation of usedCitations) {
+              try {
+                const paper = await gapAnalyzer.semanticScholar.findPaper(citation);
+                if (paper && paper.references) {
+                  referencesMap.set(citation.key, {
+                    paper,
+                    references: paper.references
+                  });
+                }
+              } catch (error) {
+                // Silent fail for status command
+              }
+              processed++;
+              updateProgress();
+            }
+            
+            // Restore original console functions
+            console.log = originalLog;
+            process.stdout.write = originalStdoutWrite;
+            gapAnalyzer.semanticScholar.requestCount = originalRequestCount;
+            
+            // Analyze gaps with higher threshold for status
+            const gaps = gapAnalyzer.analyzeGaps(referencesMap, 3); // Require 3+ citations for status
+            
+            // Final output - overwrites progress line
+            console.log(`\r  Potential Gaps: ${gaps.length} (3+ citations)${' '.repeat(20)}`);
+            
+            if (gaps.length > 0) {
+              console.log(`    (Run 'bibcli gaps' for details)`);
+            }
+            
+          } catch (error) {
+            // If gap analysis fails, fall back to simple cache info
+            const cacheStats = gapAnalyzer.semanticScholar.cache.getStats();
+            if (cacheStats.diskEntries > 0) {
+              console.log(`  Cache available: ${cacheStats.diskEntries} entries`);
+              console.log(`    (Run 'bibcli gaps' to analyze citation gaps)`);
+            } else {
+              console.log('  No cached data available. Run "bibcli gaps" for analysis.');
+            }
+          }
+        }
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// gaps command
+program
+  .command('gaps')
+  .description('Find citation gaps by analyzing references of cited papers')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('-m, --min-citations <number>', 'minimum citations to show (default: 2)', '2')
+  .option('--export-bibtex', 'export gaps as BibTeX entries')
+  .option('--max-results <number>', 'maximum results to show (default: 20)', '20')
+  .option('--limit-papers <number>', 'limit analysis to first N cited papers (for testing)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .action(async (options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+      
+      const minCitations = parseInt(options.minCitations);
+      const maxResults = parseInt(options.maxResults);
+      const limitPapers = options.limitPapers ? parseInt(options.limitPapers) : null;
+      
+      const result = await gapAnalyzer.findGaps({ minCitations, limitPapers });
+      
+      if (result.gaps.length === 0) {
+        console.log('No citation gaps found.');
+        return;
+      }
+      
+      console.log('\n=== Citation Gap Analysis ===\n');
+      console.log(`Analyzed ${result.totalAnalyzed} of your cited papers`);
+      console.log(`Found ${result.summary.totalGaps} potential gaps:`);
+      console.log(`  High priority (3+ citations): ${result.summary.highPriority}`);
+      console.log(`  Medium priority (2 citations): ${result.summary.mediumPriority}`);
+      console.log('\n' + '='.repeat(50) + '\n');
+      
+      const gapsToShow = result.gaps.slice(0, maxResults);
+      
+      if (options.exportBibtex) {
+        console.log('% BibTeX entries for citation gaps:\n');
+        
+        gapsToShow.forEach((gap, index) => {
+          const suggestedKey = gapAnalyzer.generateSuggestedKey(gap.reference);
+          const bibtex = gapAnalyzer.generateBibTeX(gap.reference, suggestedKey);
+          console.log(bibtex);
+          console.log('');
+        });
+      } else {
+        gapsToShow.forEach((gap, index) => {
+          const ref = gap.reference;
+          const authorsStr = ref.authors && ref.authors.length > 0 
+            ? ref.authors.map(a => a.name).join(', ')
+            : 'Unknown authors';
+          
+          // Show DOI first if available, then title
+          if (ref.doi) {
+            console.log(`[${index + 1}] https://doi.org/${ref.doi}`);
+            if (ref.title) {
+              console.log(`    "${ref.title}"`);
+            }
+          } else {
+            console.log(`[${index + 1}] "${ref.title || 'Unknown title'}"`);
+          }
+          
+          console.log(`    Authors: ${authorsStr}`);
+          console.log(`    Year: ${ref.year || 'Unknown'}`);
+          
+          if (ref.journal && ref.journal.name) {
+            console.log(`    Journal: ${ref.journal.name}`);
+          }
+          
+          console.log(`    Citations: ${ref.citationCount || 'N/A'}`);
+          console.log(`    Referenced by ${gap.count} of your citations:`);
+          console.log(`      ${gap.citedBy.join(', ')}`);
+          console.log('');
+        });
+        
+        if (result.gaps.length > maxResults) {
+          console.log(`... and ${result.gaps.length - maxResults} more. Use --max-results to see more.`);
+        }
+        
+        console.log('\nTo export as BibTeX: bibcli gaps --export-bibtex');
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// validate command
+program
+  .command('validate')
+  .description('Validate bibliography entries against Semantic Scholar')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .option('--used-only', 'only validate citations used in .tex file')
+  .option('--show-found', 'also show successfully found papers')
+  .option('--max-test <number>', 'limit to first N papers for testing')
+  .action(async (options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+      
+      // Get papers to validate
+      let papersToValidate = options.usedOnly 
+        ? analyzer.getUsedCitationsList()
+        : analyzer.getAllBibEntriesArray();
+      
+      if (options.maxTest) {
+        const limit = parseInt(options.maxTest);
+        papersToValidate = papersToValidate.slice(0, limit);
+      }
+      
+      console.log(`\n=== Bibliography Validation ===\n`);
+      console.log(`Validating ${papersToValidate.length} references against Semantic Scholar...`);
+      console.log('This checks if papers can be found for citation gap analysis.\n');
+      
+      const results = {
+        found: [],
+        notFound: [],
+        errors: []
+      };
+      
+      for (const [index, paper] of papersToValidate.entries()) {
+        const progress = `[${index + 1}/${papersToValidate.length}]`;
+        process.stdout.write(`${progress} Validating: ${paper.key}...`);
+        
+        try {
+          const foundPaper = await gapAnalyzer.semanticScholar.findPaper(paper);
+          if (foundPaper) {
+            const cacheIndicator = foundPaper.fromCache ? ' (cached)' : '';
+            console.log(` ✓ Found${cacheIndicator}`);
+            results.found.push({
+              key: paper.key,
+              paper,
+              foundPaper,
+              title: foundPaper.title,
+              authors: foundPaper.authors?.map(a => a.name).join(', ') || 'Unknown',
+              year: foundPaper.year,
+              references: foundPaper.references?.length || 0
+            });
+          } else {
+            console.log(` ✗ Not found`);
+            results.notFound.push({
+              key: paper.key,
+              paper,
+              reason: 'Not found in Semantic Scholar database'
+            });
+          }
+        } catch (error) {
+          console.log(` ✗ Error: ${error.message}`);
+          results.errors.push({
+            key: paper.key,
+            paper,
+            error: error.message
+          });
+        }
+      }
+      
+      // Summary
+      console.log(`\n${'='.repeat(50)}\n`);
+      console.log('Validation Summary:');
+      console.log(`  ✓ Found: ${results.found.length}`);
+      console.log(`  ✗ Not found: ${results.notFound.length}`);
+      console.log(`  ✗ Errors: ${results.errors.length}`);
+      console.log(`  Total: ${papersToValidate.length}`);
+      
+      // Show not found papers
+      if (results.notFound.length > 0) {
+        console.log(`\n${results.notFound.length} papers not found in Semantic Scholar:`);
+        results.notFound.forEach((item, i) => {
+          console.log(`\n${i + 1}. ${item.key}`);
+          console.log(`   Title: ${item.paper.title}`);
+          console.log(`   Type: ${item.paper.type}`);
+          console.log(`   Year: ${item.paper.year || 'Unknown'}`);
+          console.log(`   DOI: ${item.paper.doi || 'None'}`);
+          console.log(`   ISBN: ${item.paper.isbn || 'None'}`);
+        });
+        
+        console.log(`\nSuggestions for not found papers:`);
+        console.log(`• Add missing DOIs to .bib entries when available`);
+        console.log(`• Check for typos in titles and author names`);
+        console.log(`• Some books/older papers may not be in Semantic Scholar`);
+        console.log(`• These papers won't contribute references to gap analysis`);
+      }
+      
+      // Show errors
+      if (results.errors.length > 0) {
+        console.log(`\n${results.errors.length} papers had lookup errors:`);
+        results.errors.forEach((item, i) => {
+          console.log(`${i + 1}. ${item.key}: ${item.error}`);
+        });
+      }
+      
+      // Show found papers if requested
+      if (options.showFound && results.found.length > 0) {
+        console.log(`\n${results.found.length} papers successfully found:`);
+        results.found.forEach((item, i) => {
+          console.log(`\n${i + 1}. ${item.key} (${item.references} references)`);
+          console.log(`   ${item.title} (${item.year})`);
+          console.log(`   ${item.authors}`);
+        });
+      }
+      
+      console.log(`\nCache: ${gapAnalyzer.semanticScholar.cache.getStats().diskEntries} entries`);
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// refs command - comprehensive reference analysis
+program
+  .command('refs')
+  .description('List all references from cited papers with sorting and filtering options')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .option('--limit-papers <number>', 'limit analysis to first N cited papers (for testing)')
+  .option('--min-citations <number>', 'minimum citation count to include (default: 0)', '0')
+  .option('--sort <field>', 'sort by: citations, year, title, authors (default: citations)', 'citations')
+  .option('--order <direction>', 'sort order: desc, asc (default: desc)', 'desc')
+  .option('--filter-year <year>', 'only show papers from this year or later')
+  .option('--filter-title <text>', 'only show papers with title containing this text')
+  .option('--filter-author <text>', 'only show papers with author containing this text')
+  .option('--exclude-existing', 'exclude papers already in bibliography')
+  .option('--export', 'export as BibTeX format for piping to .bib file')
+  .option('--max-results <number>', 'maximum results to show (default: 50)', '50')
+  .action(async (options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+      
+      const limitPapers = options.limitPapers ? parseInt(options.limitPapers) : null;
+      const minCitations = parseInt(options.minCitations);
+      const maxResults = parseInt(options.maxResults);
+      
+      console.log('\\n=== Comprehensive Reference Analysis ===\\n');
+      console.log('Collecting all references from cited papers...\\n');
+      
+      // Get all references (not just gaps)
+      const referencesMap = await gapAnalyzer.getReferencesForUsedCitations(limitPapers);
+      
+      // Collect ALL references, not just gaps
+      const allReferences = [];
+      const existingPapers = options.excludeExisting ? gapAnalyzer.buildExistingPapersIndex() : null;
+      
+      for (const [citationKey, data] of referencesMap) {
+        for (const ref of data.references) {
+          if (!ref.title) continue;
+          
+          // Skip existing papers if requested
+          if (existingPapers && gapAnalyzer.isPaperInBibliography(ref, existingPapers)) {
+            continue;
+          }
+          
+          // Apply filters
+          if (minCitations > 0 && (!ref.citationCount || ref.citationCount < minCitations)) {
+            continue;
+          }
+          
+          if (options.filterYear && ref.year && ref.year < parseInt(options.filterYear)) {
+            continue;
+          }
+          
+          if (options.filterTitle && !ref.title.toLowerCase().includes(options.filterTitle.toLowerCase())) {
+            continue;
+          }
+          
+          if (options.filterAuthor && ref.authors) {
+            const hasAuthor = ref.authors.some(author => 
+              author.name.toLowerCase().includes(options.filterAuthor.toLowerCase())
+            );
+            if (!hasAuthor) continue;
+          }
+          
+          allReferences.push({
+            reference: ref,
+            citedBy: [citationKey],
+            count: 1
+          });
+        }
+      }
+      
+      // Merge duplicate references
+      const refMap = new Map();
+      for (const item of allReferences) {
+        const refKey = gapAnalyzer.createReferenceKey(item.reference);
+        if (refMap.has(refKey)) {
+          const existing = refMap.get(refKey);
+          existing.count++;
+          // Only add unique citation keys to avoid duplicates
+          for (const citedBy of item.citedBy) {
+            if (!existing.citedBy.includes(citedBy)) {
+              existing.citedBy.push(citedBy);
+            }
+          }
+        } else {
+          refMap.set(refKey, item);
+        }
+      }
+      
+      // Convert back to array and sort
+      let sortedRefs = Array.from(refMap.values());
+      
+      // Sort references
+      switch (options.sort) {
+        case 'citations':
+          sortedRefs.sort((a, b) => (b.reference.citationCount || 0) - (a.reference.citationCount || 0));
+          break;
+        case 'year':
+          sortedRefs.sort((a, b) => (b.reference.year || 0) - (a.reference.year || 0));
+          break;
+        case 'title':
+          sortedRefs.sort((a, b) => (a.reference.title || '').localeCompare(b.reference.title || ''));
+          break;
+        case 'authors':
+          sortedRefs.sort((a, b) => {
+            const aAuthor = a.reference.authors?.[0]?.name || '';
+            const bAuthor = b.reference.authors?.[0]?.name || '';
+            return aAuthor.localeCompare(bAuthor);
+          });
+          break;
+      }
+      
+      if (options.order === 'asc') {
+        sortedRefs.reverse();
+      }
+      
+      // Limit results
+      const refsToShow = sortedRefs.slice(0, maxResults);
+      
+      console.log(`Analyzed ${referencesMap.size} of your cited papers`);
+      console.log(`Found ${sortedRefs.length} references total`);
+      if (options.excludeExisting) {
+        console.log('(Excluding papers already in your bibliography)');
+      }
+      console.log(`Showing top ${refsToShow.length} results sorted by ${options.sort} (${options.order})\\n`);
+      console.log('='.repeat(60) + '\\n');
+      
+      if (options.export) {
+        // Export as BibTeX
+        refsToShow.forEach((item, index) => {
+          const suggestedKey = gapAnalyzer.generateSuggestedKey(item.reference);
+          const bibtex = gapAnalyzer.generateBibTeX(item.reference, suggestedKey);
+          console.log(bibtex);
+          console.log('');
+        });
+      } else {
+        // Human-readable format
+        refsToShow.forEach((item, index) => {
+          const ref = item.reference;
+          const authorsStr = ref.authors && ref.authors.length > 0 
+            ? ref.authors.map(a => a.name).join(', ')
+            : 'Unknown authors';
+          
+          // Show DOI first if available, then title
+          if (ref.doi) {
+            console.log(`[${index + 1}] https://doi.org/${ref.doi}`);
+            if (ref.title) {
+              console.log(`    \\"${ref.title}\\"`);
+            }
+          } else {
+            console.log(`[${index + 1}] \\"${ref.title || 'Unknown title'}\\"`);
+          }
+          
+          console.log(`    Authors: ${authorsStr}`);
+          console.log(`    Year: ${ref.year || 'Unknown'}`);
+          
+          if (ref.journal && ref.journal.name) {
+            console.log(`    Journal: ${ref.journal.name}`);
+          }
+          
+          console.log(`    Citations: ${ref.citationCount || 'N/A'}`);
+          console.log(`    Referenced by ${item.count} of your papers: ${item.citedBy.join(', ')}`);
+          console.log('');
+        });
+        
+        if (sortedRefs.length > maxResults) {
+          console.log(`... and ${sortedRefs.length - maxResults} more. Use --max-results to see more.`);
+        }
+        
+        console.log('\\nTo export as BibTeX: bibcli refs --export');
+        console.log('To save to file: bibcli refs --export > my_refs.bib');
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// doi-check command
+program
+  .command('doi-check')
+  .description('Find and suggest DOIs for bibliography entries missing DOIs')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .option('--used-only', 'only check citations used in .tex file')
+  .option('--max-check <number>', 'limit to first N papers for testing')
+  .option('--update', 'automatically add found DOIs to .bib file')
+  .action(async (options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const GapAnalyzer = require('../lib/gap-analyzer');
+      const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+      
+      // Get papers to check
+      let papersToCheck = options.usedOnly 
+        ? analyzer.getUsedCitationsList()
+        : analyzer.getAllBibEntriesArray();
+      
+      // Filter out papers that already have DOIs
+      const missingDOIs = papersToCheck.filter(paper => !paper.doi);
+      
+      if (options.maxCheck) {
+        const limit = parseInt(options.maxCheck);
+        papersToCheck = missingDOIs.slice(0, limit);
+      } else {
+        papersToCheck = missingDOIs;
+      }
+      
+      console.log(`\\n=== DOI Lookup ===\\n`);
+      console.log(`Found ${missingDOIs.length} entries without DOIs`);
+      if (options.usedOnly) {
+        console.log('(Checking only used citations)');
+      }
+      console.log(`Checking ${papersToCheck.length} entries...\\n`);
+      
+      if (papersToCheck.length === 0) {
+        console.log('All entries already have DOIs!');
+        return;
+      }
+      
+      const results = {
+        found: [],
+        notFound: [],
+        errors: []
+      };
+      
+      for (const [index, paper] of papersToCheck.entries()) {
+        const progress = `[${index + 1}/${papersToCheck.length}]`;
+        process.stdout.write(`${progress} Checking: ${paper.key}...`);
+        
+        try {
+          const foundPaper = await gapAnalyzer.semanticScholar.findPaper(paper);
+          if (foundPaper && (foundPaper.doi || foundPaper.externalIds?.DOI)) {
+            const doi = foundPaper.doi || foundPaper.externalIds?.DOI;
+            const cacheIndicator = foundPaper.fromCache ? ' (cached)' : '';
+            console.log(` ✓ DOI found${cacheIndicator}`);
+            results.found.push({
+              key: paper.key,
+              paper,
+              doi: doi,
+              title: foundPaper.title,
+              year: foundPaper.year
+            });
+          } else if (foundPaper) {
+            console.log(' - Paper found but no DOI');
+            results.notFound.push({
+              key: paper.key,
+              paper,
+              reason: 'Paper found in database but no DOI available'
+            });
+          } else {
+            console.log(' ✗ Not found');
+            results.notFound.push({
+              key: paper.key,
+              paper,
+              reason: 'Paper not found in Semantic Scholar'
+            });
+          }
+        } catch (error) {
+          console.log(` ✗ Error: ${error.message}`);
+          results.errors.push({
+            key: paper.key,
+            paper,
+            error: error.message
+          });
+        }
+      }
+      
+      // Summary
+      console.log(`\\n${'='.repeat(50)}\\n`);
+      console.log('DOI Lookup Summary:');
+      console.log(`  ✓ DOIs found: ${results.found.length}`);
+      console.log(`  - No DOI available: ${results.notFound.length}`);
+      console.log(`  ✗ Errors: ${results.errors.length}`);
+      console.log(`  Total checked: ${papersToCheck.length}`);
+      
+      // Show found DOIs
+      if (results.found.length > 0) {
+        console.log(`\\n${results.found.length} DOIs found:`);
+        results.found.forEach((item, i) => {
+          console.log(`\\n${i + 1}. ${item.key}`);
+          console.log(`   Title: ${item.title}`);
+          console.log(`   Year: ${item.year}`);
+          console.log(`   DOI: ${item.doi}`);
+          console.log(`   URL: https://doi.org/${item.doi}`);
+          console.log(`   Add to .bib: doi={${item.doi}},`);
+        });
+        
+        console.log(`\\nTo add these DOIs to your .bib file:`);
+        if (options.update) {
+          console.log(`\nUpdating .bib file with found DOIs...`);
+          const fs = require('fs');
+          let bibContent = fs.readFileSync(bibFile, 'utf8');
+          let updatedCount = 0;
+          
+          for (const item of results.found) {
+            // Find the entry and add DOI
+            const entryRegex = new RegExp(`(@\\w+\\{${item.key},[\\s\\S]*?)\\n\\}`, 'g');
+            const match = entryRegex.exec(bibContent);
+            if (match) {
+              const entryContent = match[1];
+              // Check if DOI already exists
+              if (!entryContent.includes('doi')) {
+                const updatedEntry = entryContent + `,\\n\\tdoi = {${item.doi}}`;
+                bibContent = bibContent.replace(match[0], updatedEntry + '\\n}');
+                updatedCount++;
+                console.log(`  ✓ Added DOI to ${item.key}`);
+              } else {
+                console.log(`  - ${item.key} already has DOI, skipping`);
+              }
+            }
+          }
+          
+          if (updatedCount > 0) {
+            fs.writeFileSync(bibFile, bibContent);
+            console.log(`\\n🎉 Successfully updated ${updatedCount} entries in ${bibFile}`);
+          } else {
+            console.log(`\\nNo entries were updated.`);
+          }
+        } else {
+          console.log(`1. Copy the "doi={...}," lines above`);
+          console.log(`2. Add them to the corresponding entries in ${bibFile}`);
+          console.log(`3. Or run: bibcli doi-check --update 🤖`);
+        }
+      }
+      
+      // Show problems
+      if (results.notFound.length > 0) {
+        console.log(`\\n${results.notFound.length} entries without DOIs:`);
+        results.notFound.slice(0, 10).forEach((item, i) => {
+          console.log(`${i + 1}. ${item.key}: ${item.reason}`);
+        });
+        if (results.notFound.length > 10) {
+          console.log(`... and ${results.notFound.length - 10} more`);
+        }
+      }
+      
+      if (results.errors.length > 0) {
+        console.log(`\\n${results.errors.length} lookup errors:`);
+        results.errors.forEach((item, i) => {
+          console.log(`${i + 1}. ${item.key}: ${item.error}`);
+        });
+      }
+      
+      const cacheStats = gapAnalyzer.semanticScholar.cache.getStats();
+      console.log(`\\nCache: ${cacheStats.diskEntries} entries, ${cacheStats.totalSizeKB} KB`);
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// cache command
+program
+  .command('cache')
+  .description('Manage local API cache')
+  .option('--stats', 'show cache statistics')
+  .option('--cleanup', 'remove expired cache entries')
+  .option('--clear', 'clear all cache')
+  .action((options) => {
+    try {
+      const cache = new APICache();
+      
+      if (options.stats) {
+        const stats = cache.getStats();
+        console.log('Cache Statistics:');
+        console.log(`  Memory entries: ${stats.memoryEntries}`);
+        console.log(`  Disk entries: ${stats.diskEntries}`);
+        console.log(`  Total size: ${stats.totalSizeKB} KB`);
+        console.log(`  Cache directory: ${stats.cacheDir}`);
+      } else if (options.cleanup) {
+        const removed = cache.cleanup();
+        console.log(`Cleaned up ${removed} expired cache entries.`);
+      } else if (options.clear) {
+        cache.clear();
+        console.log('Cache cleared.');
+      } else {
+        // Default: show stats
+        const stats = cache.getStats();
+        console.log('Cache Statistics:');
+        console.log(`  Memory entries: ${stats.memoryEntries}`);
+        console.log(`  Disk entries: ${stats.diskEntries}`);
+        console.log(`  Total size: ${stats.totalSizeKB} KB`);
+        console.log(`  Cache directory: ${stats.cacheDir}`);
+        console.log('\nUse --cleanup to remove expired entries or --clear to clear all.');
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program.parse();
