@@ -1,18 +1,23 @@
 {
-  "name": "bibcli",
+  "name": "bib-cli",
   "version": "1.0.0",
-  "description": "Bibliography management CLI tool",
+  "description": "Bibliography management CLI tool with citation gap analysis",
   "main": "index.js",
   "bin": {
-    "bibcli": "./bin/bibcli"
+    "bib": "./bin/bib"
   },
   "scripts": {
     "test": "node test.js"
   },
-  "keywords": ["bibliography", "latex", "citations"],
+  "keywords": [
+    "bibliography",
+    "latex",
+    "citations"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@retorquere/bibtex-parser": "^9.0.21",
     "commander": "^11.0.0"
   }
 }

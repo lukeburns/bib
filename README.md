@@ -1,234 +1,254 @@
-# bibcli
+# bib
 
-Bibliography management CLI tool with citation gap analysis and comprehensive reference exploration.
-
-## Features
-
-- **Citation Analysis**: Find used/unused citations in your LaTeX documents
-- **Gap Detection**: Identify frequently cited papers missing from your bibliography
-- **Reference Exploration**: Browse all references from your cited papers with advanced filtering
-- **Semantic Scholar Integration**: Leverage academic database for citation analysis
-- **Flexible Export**: Generate BibTeX files for seamless bibliography management
-- **Smart Caching**: Local caching with 7-day expiration to minimize API calls
+A bib file utility and citation gap analysis. Analyze your LaTeX bibliography, find missing references, and manage DOIs with ease.
 
 ## Installation
 
 ```bash
-cd bibcli
-npm install
-chmod +x bin/bibcli
+npm i -g bib-cli
 ```
 
 ## Quick Start
 
 ```bash
-# Get citation statistics
-./bin/bibcli status
+# Check with references you've used and haven't used yet
+bib used
+bib unused
 
-# Find citation gaps (papers cited by multiple sources but missing from your bib)
-./bin/bibcli gaps
+# Find and add missing DOIs to your bib file
+bib dois
+bib dois --update
 
-# Export gaps as BibTeX
-./bin/bibcli gaps --export-bibtex > new_refs.bib
+# Show citation statistics
+bib status
 
-# Explore all references with filtering
-./bin/bibcli refs --exclude-existing --min-citations 50 --export > high_impact.bib
+# Find citation gaps (papers you should consider citing)
+bib gaps
+
+# Export gaps as BibTeX for easy addition to your bibliography
+bib gaps -e -q > gaps.bib
+
+# Explore all references from your cited papers
+bib references -n 20
 ```
 
 ## Commands
 
-### `status`
-Show citation statistics for your bibliography.
+### `bib status`
+Show citation statistics and gap analysis summary.
 
 ```bash
-./bin/bibcli status
+bib status                    # Quick overview
+bib status --fresh            # Force fresh API lookups
+bib status --basic            # Basic stats only (no API calls)
 ```
 
-### `used` / `unused`
-List citations that are used or unused in your LaTeX document.
+### `bib gaps`
+Find citation gaps by analyzing references of your cited papers.
 
 ```bash
-# List unused citations
-./bin/bibcli unused
-
-# Search unused citations
-./bin/bibcli unused --search "quantum"
-
-# Show only citation keys
-./bin/bibcli unused --keys-only
-
-# Verbose output with details
-./bin/bibcli unused --verbose
+bib gaps                      # Show potential gaps
+bib gaps -e                   # Export as BibTeX
+bib gaps -e -q > gaps.bib     # Export BibTeX to file
+bib gaps -m 5 -n 10           # Min 5 citations, show 10 results
 ```
 
-### `gaps`
-Identify citation gaps by analyzing references of your cited papers.
+**Options:**
+- `-e, --export` - Export as BibTeX entries
+- `-n, --number <N>` - Maximum results to show (default: 20)
+- `-m, --min-citations <N>` - Minimum citations to show (default: 2)
+- `-q, --quiet` - Suppress progress output (useful for piping)
 
-**Gap Criteria**: Papers cited by ≥2 of your sources but not in your bibliography.
+### `bib references`
+Explore all references from your cited papers with sorting and filtering.
 
 ```bash
-# Find citation gaps
-./bin/bibcli gaps
-
-# Adjust minimum citation threshold
-./bin/bibcli gaps --min-citations 3
-
-# Export as BibTeX
-./bin/bibcli gaps --export-bibtex
-
-# Limit results
-./bin/bibcli gaps --max-results 10
+bib references                       # List all references
+bib references -e > all_refs.bib     # Export to BibTeX
+bib references --sort year --order asc  # Sort by year ascending
+bib references --filter-year 2020    # Only papers from 2020+
+bib references --exclude-existing    # Exclude papers already in your bib
 ```
 
-### `refs`
-Comprehensive reference analysis with advanced filtering and sorting.
+**Options:**
+- `-e, --export` - Export as BibTeX format
+- `-n, --number <N>` - Maximum results (default: 50)
+- `--sort <field>` - Sort by: citations, year, title, authors
+- `--order <dir>` - Sort order: desc, asc
+- `--filter-year <year>` - Show papers from this year or later
+- `--filter-title <text>` - Filter by title text
+- `--filter-author <text>` - Filter by author name
+- `--exclude-existing` - Exclude papers already in bibliography
+
+### `bib dois`
+Find and manage missing DOIs in your bibliography.
 
 ```bash
-# Show all references from cited papers
-./bin/bibcli refs
-
-# Exclude papers already in bibliography (gap-like behavior)
-./bin/bibcli refs --exclude-existing
-
-# Filter by citation count
-./bin/bibcli refs --min-citations 100
-
-# Filter by year
-./bin/bibcli refs --filter-year 2020
-
-# Filter by title content
-./bin/bibcli refs --filter-title "quantum measurement"
-
-# Filter by author
-./bin/bibcli refs --filter-author "Nielsen"
-
-# Sort by different criteria
-./bin/bibcli refs --sort year --order desc
-./bin/bibcli refs --sort authors --order asc
-
-# Export filtered results
-./bin/bibcli refs --min-citations 50 --filter-year 2015 --export > modern_refs.bib
+bib dois                      # Find missing DOIs
+bib dois --update             # Automatically add found DOIs
+bib dois -n 5                 # Check only first 5 entries
+bib dois --used-only          # Check only papers used in LaTeX
 ```
 
-**Sorting Options**: `citations` (default), `year`, `title`, `authors`
-**Sort Order**: `desc` (default), `asc`
+**Options:**
+- `--update` - Automatically add found DOIs to .bib file
+- `-n, --number <N>` - Limit to first N papers for testing
+- `--used-only` - Only check citations used in .tex file
 
-### `validate`
-Check which bibliography entries can be found in Semantic Scholar.
+### `bib used` / `bib unused`
+List used or unused citations from your bibliography.
 
 ```bash
-# Validate all bibliography entries
-./bin/bibcli validate
-
-# Validate only used citations
-./bin/bibcli validate --used-only
-
-# Show successfully found papers too
-./bin/bibcli validate --show-found
-
-# Test with limited entries
-./bin/bibcli validate --max-test 5
+bib used                      # List all used citations
+bib used -v                   # Verbose output with details
+bib used -k                   # Keys only
+bib unused -s "quantum"       # Search unused citations
 ```
 
-### `cache`
+### `bib validate`
+Validate bibliography entries against Semantic Scholar.
+
+```bash
+bib validate                  # Validate all entries
+bib validate --used-only      # Validate only used citations
+bib validate --show-found     # Show successfully found papers
+```
+
+### `bib cache`
 Manage local API cache.
 
 ```bash
-# Show cache statistics
-./bin/bibcli cache
-
-# Clean up expired entries
-./bin/bibcli cache --cleanup
-
-# Clear all cache
-./bin/bibcli cache --clear
+bib cache                     # Show cache statistics
+bib cache --cleanup           # Remove expired entries
+bib cache --clear             # Clear all cache
 ```
 
-## Global Options
+## Configuration
 
-- `-b, --bib <file>` - Path to .bib file (default: refs.bib)
-- `-t, --tex <file>` - Path to .tex file (default: main.tex)
-- `--api-key <key>` - Semantic Scholar API key for authenticated requests
+### API Keys
 
-## API Key Setup
+For higher rate limits and better reliability, add your Semantic Scholar API key:
 
-For better rate limits and reliability, set up a Semantic Scholar API key:
-
-1. Get an API key from [Semantic Scholar](https://www.semanticscholar.org/product/api)
-2. Set it via environment variable:
-   ```bash
-   export SEMANTIC_SCHOLAR_API_KEY="your_key_here"
+1. Get a free API key from [Semantic Scholar](https://www.semanticscholar.org/product/api)
+2. Create a `.env` file in your project directory:
    ```
-3. Or create a `.env` file:
+   SEMANTIC_SCHOLAR_API_KEY=your_api_key_here
    ```
-   SEMANTIC_SCHOLAR_API_KEY=your_key_here
-   ```
-4. Or pass it directly:
-   ```bash
-   ./bin/bibcli gaps --api-key your_key_here
-   ```
+3. Or pass it directly: `bib gaps --api-key your_key`
 
-## Examples
+### File Discovery
 
-### Find Citation Gaps
+bib automatically finds your files:
+- **Bibliography**: `refs.bib` or `references.bib`
+- **LaTeX**: `main.tex`
+- **Custom paths**: Use `-b file.bib` and `-t document.tex`
+
+## Workflow Examples
+
+### 1. Complete Bibliography Analysis
 ```bash
-# Basic gap analysis
-./bin/bibcli gaps
+# Get overview
+bib status
 
-# High-impact gaps only
-./bin/bibcli gaps --min-citations 3
+# Find and add missing DOIs
+bib dois --update
 
-# Export gaps for manual review
-./bin/bibcli gaps --export-bibtex > potential_refs.bib
+# Find and export citation gaps
+bib gaps -e -q > gaps.bib
+
+# Validate everything worked
+bib validate --used-only
 ```
 
-### Build Custom Bibliography
+### 2. Paper Discovery
 ```bash
-# Recent high-impact papers not in bibliography
-./bin/bibcli refs --exclude-existing --min-citations 100 --filter-year 2020 --export > recent_high_impact.bib
+# Find highly-cited recent papers in your field
+bib references --filter-year 2020 --sort citations -n 20
 
-# Papers by specific author
-./bin/bibcli refs --filter-author "Preskill" --export > preskill_refs.bib
-
-# Quantum measurement papers
-./bin/bibcli refs --filter-title "quantum measurement" --min-citations 50 --export > qm_refs.bib
+# Export promising references
+bib references --filter-year 2022 --min-citations 50 -e -q > recent_refs.bib
 ```
 
-### Validate Bibliography
+### 3. Bibliography Maintenance
 ```bash
-# Check which papers can contribute to gap analysis
-./bin/bibcli validate
+# Check which citations are unused
+bib unused
 
-# Focus on used citations only
-./bin/bibcli validate --used-only
+# Find papers missing DOIs
+bib dois
 ```
 
-## Cache Indicators
+## Output Formats
 
-Commands show cache status to help understand performance:
-- `✓ Found (cached)` - Result from local cache
-- `✓ Found` - Fresh API request
-- `- No references found (cached)` - Cached negative result
+### Human-Readable
+Default output shows papers with DOI links first, titles, authors, and citation context:
+
+```
+[1] https://doi.org/10.1038/s41586-019-1666-5
+    "Quantum advantage with shallow circuits"
+    Authors: E. Farhi, D. Gamarnik, S. Gutmann
+    Year: 2019
+    Citations: 234
+    Referenced by 3 of your papers: farhi2014, preskill2018, harrow2009
+```
+
+### BibTeX Export
+Clean BibTeX entries with citation metadata in notes:
+
+```bibtex
+@article{farhi2019,
+  title={Quantum advantage with shallow circuits},
+  author={E. Farhi and D. Gamarnik and S. Gutmann},
+  year={2019},
+  doi={10.1038/s41586-019-1666-5},
+  note={Citation count: 234; Referenced by: farhi2014, preskill2018, harrow2009}
+}
+```
+
+## Technical Details
+
+- **Rate Limiting**: Respects API limits with exponential backoff
+- **Caching**: 7-day local cache for API responses
+- **Paper Matching**: DOI-first matching with title fallback
+- **Deduplication**: Smart reference deduplication across papers
+- **APIs**: Semantic Scholar (primary) + CrossRef (fallback)
 
 ## Troubleshooting
 
-### Rate Limiting
-- Use API key for better rate limits (1 req/sec vs shared public limits)
-- Commands automatically implement exponential backoff
-- Results are cached locally to minimize repeat requests
+### Common Issues
 
-### Missing Papers
-- Some papers (especially books) may not be in Semantic Scholar
-- Use `bibcli validate` to check which papers can be analyzed
-- Consider adding DOIs to .bib entries for better matching
+**"No .bib file found"**
+- Place `refs.bib` in your directory, or use `-b path/to/file.bib`
 
-### Performance
-- Use `--limit-papers <N>` for testing with large bibliographies
-- Cache persists between runs (7-day expiration)
-- API requests run at ~1 per second with exponential backoff
+**"Rate limit errors"**
+- Add your Semantic Scholar API key to `.env`
+- Subsequent runs use cache for faster results
 
-## File Support
+**"Many papers not found"**
+- Add DOIs to your bibliography entries when available
+- Some older papers may not be in Semantic Scholar
 
-- **LaTeX**: Finds `\cite{key}`, `\citep{key}`, `\citet{key}`, etc.
-- **BibTeX**: Parses all standard entry types with proper brace handling
-- **Auto-discovery**: Automatically finds `refs.bib` and `main.tex` in current/parent directories
+### Getting Help
+
+```bash
+bib --help                # General help
+bib gaps --help           # Command-specific help
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [Semantic Scholar API](https://www.semanticscholar.org/product/api) for paper data
+- [CrossRef API](https://www.crossref.org/services/api/) for DOI resolution
+- Built with [Commander.js](https://github.com/tj/commander.js/) for CLI interface
