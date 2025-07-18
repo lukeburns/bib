@@ -34,21 +34,11 @@ bib gaps
 bib gaps --include-unused --min-citations 10 -q -e > gaps.bib
 ```
 
-## Configuration
+It's not required, but you can add a [Semantic Scholar](https://www.semanticscholar.org/product/api) API Key to improve the rate limit using the following command.
 
-### API Keys
-
-For higher rate limits and better reliability, add your Semantic Scholar API key:
-
-1. Get a free API key from [Semantic Scholar](https://www.semanticscholar.org/product/api)
-2. Create a `.env` file in your project directory:
-   ```
-   SEMANTIC_SCHOLAR_API_KEY=your_api_key_here
-   ```
-3. Or pass it directly: `bib gaps --api-key your_key`
-
-bib also uses the CrossRef API.
-
+```bash
+bib config --set-semantic-scholar-key your-api-key-here
+```
 
 ## Acknowledgments
 

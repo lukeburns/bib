@@ -1079,20 +1079,20 @@ program
 program
   .command('config')
   .description('Manage configuration settings')
-  .option('--set-api-key <key>', 'set Semantic Scholar API key')
-  .option('--get-api-key', 'show current API key (masked)')
-  .option('--remove-api-key', 'remove stored API key')
+  .option('--set-semantic-scholar-key <key>', 'set Semantic Scholar API key')
+  .option('--get-semantic-scholar-key', 'show current Semantic Scholar API key (masked)')
+  .option('--remove-semantic-scholar-key', 'remove stored Semantic Scholar API key')
   .option('--show-config', 'show all configuration')
   .option('--config-path', 'show config file path')
   .action((options) => {
     try {
       const config = new Config();
       
-      if (options.setApiKey) {
-        config.setSemanticScholarApiKey(options.setApiKey);
+      if (options.setSemanticScholarKey) {
+        config.setSemanticScholarApiKey(options.setSemanticScholarKey);
         console.log('✓ Semantic Scholar API key saved');
         console.log(`Config saved to: ${config.getConfigPath()}`);
-      } else if (options.getApiKey) {
+      } else if (options.getSemanticScholarKey) {
         const apiKey = config.getSemanticScholarApiKey();
         if (apiKey) {
           const masked = apiKey.substring(0, 8) + '...';
@@ -1100,7 +1100,7 @@ program
         } else {
           console.log('No Semantic Scholar API key configured');
         }
-      } else if (options.removeApiKey) {
+      } else if (options.removeSemanticScholarKey) {
         config.removeSemanticScholarApiKey();
         console.log('✓ Semantic Scholar API key removed');
       } else if (options.showConfig) {
@@ -1124,15 +1124,15 @@ program
       } else {
         // Default: show help
         console.log('Configuration Management:');
-        console.log('  --set-api-key <key>   Set Semantic Scholar API key');
-        console.log('  --get-api-key         Show current API key (masked)');
-        console.log('  --remove-api-key      Remove stored API key');
-        console.log('  --show-config         Show all configuration');
-        console.log('  --config-path         Show config file path');
+        console.log('  --set-semantic-scholar-key <key>   Set Semantic Scholar API key');
+        console.log('  --get-semantic-scholar-key         Show current Semantic Scholar API key (masked)');
+        console.log('  --remove-semantic-scholar-key      Remove stored Semantic Scholar API key');
+        console.log('  --show-config                      Show all configuration');
+        console.log('  --config-path                      Show config file path');
         console.log('');
         console.log('Examples:');
-        console.log('  bib config --set-api-key your-api-key-here');
-        console.log('  bib config --get-api-key');
+        console.log('  bib config --set-semantic-scholar-key your-api-key-here');
+        console.log('  bib config --get-semantic-scholar-key');
         console.log('  bib config --show-config');
       }
       
