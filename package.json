@@ -1,5 +1,5 @@
 {
-  "name": "bib-cli",
+  "name": "@lukeburns/bib",
   "version": "1.0.0",
   "description": "Bib utility",
   "main": "index.js",

@@ -5,7 +5,7 @@ A bib file utility and citation gap analysis. Analyze your LaTeX bibliography, f
 ## Installation
 
 ```bash
-npm i -g bib-cli
+npm i -g @lukeburns/bib
 ```
 
 or
