@@ -1,5 +1,7 @@
 # bib
 
+<img src="baby-bib.png" alt="bib icon" width="120" align="right">
+
 A bib file utility and citation gap analysis. Analyze your LaTeX bibliography, find missing references, and manage DOIs with ease.
 
 ## Installation
