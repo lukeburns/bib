@@ -15,7 +15,7 @@
     "citations"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "Unlicense",
   "dependencies": {
     "@retorquere/bibtex-parser": "^9.0.21",
     "commander": "^11.0.0"
