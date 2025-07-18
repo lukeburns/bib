@@ -49,4 +49,5 @@ bib gaps --include-unused --min-citations 10 -q -e > gaps.bib
 - [Semantic Scholar API](https://www.semanticscholar.org/product/api) for paper data
 - [CrossRef API](https://www.crossref.org/services/api/) for DOI resolution
 - Built with [Commander.js](https://github.com/tj/commander.js/) for CLI interface
+- Bib icon created by [Chanut-is-Industries](https://www.flaticon.com/authors/chanut-is-industries)
 - Made with [Claude Code](https://www.anthropic.com/claude-code)
