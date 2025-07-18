@@ -8,10 +8,11 @@ A bib file utility and citation gap analysis. Analyze your LaTeX bibliography, f
 npm i -g bib-cli
 ```
 
-## Quick Start
+## Examples
 
 ```bash
-# Check with references you've used and haven't used yet
+# Check which references you've used and haven't used yet
+bib status --basic
 bib used
 bib unused
 
@@ -19,14 +20,12 @@ bib unused
 bib dois
 bib dois --update
 
-# Show citation statistics
-bib status
-
-# Find citation gaps (papers you should consider citing)
+# Check which papers 
+basic status
 bib gaps
 
-# Export gaps as BibTeX for easy addition to your bibliography
-bib gaps -e -q > gaps.bib
+# Export BibTeX of papers that have been cited at least 10 times by any paper in your bib file
+bib gaps --include-unused --min-citations 10 -q -e > gaps.bib
 
 # Explore all references from your cited papers
 bib references -n 20
@@ -221,27 +220,12 @@ Clean BibTeX entries with citation metadata in notes:
 - Place `refs.bib` in your directory, or use `-b path/to/file.bib`
 
 **"Rate limit errors"**
-- Add your Semantic Scholar API key to `.env`
+- Add your Semantic Scholar API key
 - Subsequent runs use cache for faster results
 
 **"Many papers not found"**
 - Add DOIs to your bibliography entries when available
 - Some older papers may not be in Semantic Scholar
-
-### Getting Help
-
-```bash
-bib --help                # General help
-bib gaps --help           # Command-specific help
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "bib-cli",
   "version": "1.0.0",
-  "description": "Bibliography management CLI tool with citation gap analysis",
+  "description": "Bib utility",
   "main": "index.js",
   "bin": {
     "bib": "./bin/bib"

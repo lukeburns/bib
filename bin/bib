@@ -106,7 +106,10 @@ program
   .option('-s, --search <query>', 'search unused citations')
   .option('-k, --keys-only', 'show only citation keys')
   .option('-v, --verbose', 'show detailed information')
-  .action((options) => {
+  .option('--sort-by-citations', 'sort by citation count (requires API calls)')
+  .option('--sort-by-relevance', 'sort by how often cited by your used papers (requires API calls)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .action(async (options) => {
     try {
       const { bibFile, texFile } = getFilePaths(options);
       const analyzer = new CitationAnalyzer(bibFile, texFile);
@@ -120,6 +123,94 @@ program
         return;
       }
       
+      // Sort by citation count if requested
+      if (options.sortByCitations) {
+        console.log('Fetching citation counts from Semantic Scholar...');
+        const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+        
+        // Fetch citation data for each unused citation
+        for (let i = 0; i < unused.length; i++) {
+          process.stdout.write(`\rProgress: ${i + 1}/${unused.length} (${Math.round((i + 1) / unused.length * 100)}%)`);
+          
+          try {
+            const paper = await gapAnalyzer.semanticScholar.findPaper(unused[i]);
+            unused[i].citationCount = paper ? paper.citationCount : 0;
+          } catch (error) {
+            unused[i].citationCount = 0;
+          }
+        }
+        console.log('\n');
+        
+        // Sort by citation count (descending)
+        unused.sort((a, b) => (b.citationCount || 0) - (a.citationCount || 0));
+      }
+      
+      // Sort by relevance (how often cited by used papers) if requested
+      if (options.sortByRelevance) {
+        console.log('Analyzing relevance based on your used citations...');
+        const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+        
+        // Get references for all used citations
+        const referencesMap = await gapAnalyzer.getReferencesForUsedCitations(null, true);
+        
+        // Count how many times each unused paper is cited by used papers
+        const unusedKeys = new Set(unused.map(u => u.key.toLowerCase()));
+        
+        unused.forEach(entry => {
+          entry.relevanceCount = 0;
+          entry.citedBy = [];
+        });
+        
+        // Count citations from used papers
+        let processed = 0;
+        const totalUsed = referencesMap.size;
+        
+        for (const [citingKey, data] of referencesMap) {
+          process.stdout.write(`\rProgress: ${++processed}/${totalUsed} (${Math.round(processed / totalUsed * 100)}%)`);
+          
+          if (data.references) {
+            for (const ref of data.references) {
+              // Try to match reference to unused citations by title/author/year
+              const matchedUnused = unused.find(u => {
+                // Try exact key match first
+                if (u.key.toLowerCase() === citingKey.toLowerCase()) return false; // Skip self
+                
+                // Match by title similarity
+                if (ref.title && u.title) {
+                  const refTitle = ref.title.toLowerCase().replace(/[^\w\s]/g, '');
+                  const unusedTitle = u.title.toLowerCase().replace(/[^\w\s]/g, '');
+                  if (refTitle.includes(unusedTitle) || unusedTitle.includes(refTitle)) {
+                    return true;
+                  }
+                }
+                
+                // Match by author and year
+                if (ref.year && u.year && ref.year === u.year) {
+                  const refAuthors = (ref.authors || []).map(a => a.name ? a.name.toLowerCase() : '');
+                  const unusedAuthor = (u.author || '').toLowerCase();
+                  
+                  // Check if any author matches
+                  if (refAuthors.some(ra => unusedAuthor.includes(ra.split(' ').pop()))) {
+                    return true;
+                  }
+                }
+                
+                return false;
+              });
+              
+              if (matchedUnused) {
+                matchedUnused.relevanceCount++;
+                matchedUnused.citedBy.push(citingKey);
+              }
+            }
+          }
+        }
+        console.log('\n');
+        
+        // Sort by relevance count (descending)
+        unused.sort((a, b) => (b.relevanceCount || 0) - (a.relevanceCount || 0));
+      }
+      
       if (options.keysOnly) {
         unused.forEach(entry => console.log(entry.key));
       } else if (options.verbose) {
@@ -129,13 +220,21 @@ program
           console.log(`  Title: ${entry.title || 'N/A'}`);
           console.log(`  Author: ${entry.author || 'N/A'}`);
           console.log(`  Year: ${entry.year || 'N/A'}`);
+          if (entry.citationCount !== undefined) {
+            console.log(`  Citations: ${entry.citationCount}`);
+          }
+          if (entry.relevanceCount !== undefined && entry.relevanceCount > 0) {
+            console.log(`  Cited by ${entry.relevanceCount} of your used papers: ${entry.citedBy.join(', ')}`);
+          }
           console.log('');
         });
       } else {
-        // Default format: key - title
+        // Default format: key - title (with counts if available)
         unused.forEach(entry => {
           const title = entry.title ? ` - ${entry.title}` : '';
-          console.log(`${entry.key}${title}`);
+          const citations = entry.citationCount !== undefined ? ` (${entry.citationCount} citations)` : '';
+          const relevance = entry.relevanceCount > 0 ? ` [cited by ${entry.relevanceCount} used papers]` : '';
+          console.log(`${entry.key}${title}${citations}${relevance}`);
         });
       }
       
@@ -389,7 +488,7 @@ program
       if (!options.quiet) {
         console.log('\n=== Citation Gap Analysis ===\n');
         console.log(`Analyzed ${result.totalAnalyzed} of your cited papers`);
-        console.log(`Found ${result.summary.totalGaps} potential gaps with ${minCitations}+ citations`);
+        console.log(`Found ${result.summary.totalGaps} papers cited by at least ${minCitations}+ of your references`);
         console.log('\n' + '='.repeat(50) + '\n');
       }
       
