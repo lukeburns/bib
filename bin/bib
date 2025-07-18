@@ -28,16 +28,37 @@ function findFile(fileName, searchPaths = ['.', '..']) {
 
 // Get file paths with defaults
 function getFilePaths(options) {
-  const bibFile = options.bib || findFile('refs.bib') || findFile('references.bib');
-  const texFile = options.tex || findFile('main.tex');
+  // Load config defaults
+  const config = new Config();
+  const configBibName = config.get('defaultBibName');
+  const configTexName = config.get('defaultTexName');
+  
+  // Priority: command line > find configured name > find default names
+  let bibFile = options.bib;
+  if (!bibFile) {
+    if (configBibName) {
+      bibFile = findFile(configBibName);
+    } else {
+      bibFile = findFile('refs.bib') || findFile('references.bib');
+    }
+  }
+  
+  let texFile = options.tex;
+  if (!texFile) {
+    if (configTexName) {
+      texFile = findFile(configTexName);
+    } else {
+      texFile = findFile('main.tex');
+    }
+  }
   
   if (!bibFile) {
-    console.error('Error: Could not find .bib file. Use --bib to specify path.');
+    console.error('Error: Could not find .bib file. Use --bib to specify path or set default with: bib config --set-bib <filename>');
     process.exit(1);
   }
   
   if (!texFile) {
-    console.error('Error: Could not find .tex file. Use --tex to specify path.');
+    console.error('Error: Could not find .tex file. Use --tex to specify path or set default with: bib config --set-tex <filename>');
     process.exit(1);
   }
   
@@ -1082,6 +1103,10 @@ program
   .option('--set-semantic-scholar-key <key>', 'set Semantic Scholar API key')
   .option('--get-semantic-scholar-key', 'show current Semantic Scholar API key (masked)')
   .option('--remove-semantic-scholar-key', 'remove stored Semantic Scholar API key')
+  .option('--set-bib <name>', 'set default bibliography filename')
+  .option('--get-bib', 'show default bibliography filename')
+  .option('--set-tex <name>', 'set default LaTeX filename')
+  .option('--get-tex', 'show default LaTeX filename')
   .option('--show-config', 'show all configuration')
   .option('--config-path', 'show config file path')
   .action((options) => {
@@ -1103,6 +1128,26 @@ program
       } else if (options.removeSemanticScholarKey) {
         config.removeSemanticScholarApiKey();
         console.log('✓ Semantic Scholar API key removed');
+      } else if (options.setBib) {
+        config.set('defaultBibName', options.setBib);
+        console.log(`✓ Default bibliography filename set to: ${options.setBib}`);
+      } else if (options.getBib) {
+        const bibName = config.get('defaultBibName');
+        if (bibName) {
+          console.log(`Default bibliography filename: ${bibName}`);
+        } else {
+          console.log('Default bibliography filenames: refs.bib, references.bib');
+        }
+      } else if (options.setTex) {
+        config.set('defaultTexName', options.setTex);
+        console.log(`✓ Default LaTeX filename set to: ${options.setTex}`);
+      } else if (options.getTex) {
+        const texName = config.get('defaultTexName');
+        if (texName) {
+          console.log(`Default LaTeX filename: ${texName}`);
+        } else {
+          console.log('Default LaTeX filename: main.tex');
+        }
       } else if (options.showConfig) {
         const allConfig = config.getAll();
         console.log('Current configuration:');
@@ -1127,12 +1172,17 @@ program
         console.log('  --set-semantic-scholar-key <key>   Set Semantic Scholar API key');
         console.log('  --get-semantic-scholar-key         Show current Semantic Scholar API key (masked)');
         console.log('  --remove-semantic-scholar-key      Remove stored Semantic Scholar API key');
+        console.log('  --set-bib <name>                   Set default bibliography filename');
+        console.log('  --get-bib                          Show default bibliography filename');
+        console.log('  --set-tex <name>                   Set default LaTeX filename');
+        console.log('  --get-tex                          Show default LaTeX filename');
         console.log('  --show-config                      Show all configuration');
         console.log('  --config-path                      Show config file path');
         console.log('');
         console.log('Examples:');
         console.log('  bib config --set-semantic-scholar-key your-api-key-here');
-        console.log('  bib config --get-semantic-scholar-key');
+        console.log('  bib config --set-bib bibliography.bib');
+        console.log('  bib config --set-tex paper.tex');
         console.log('  bib config --show-config');
       }
       
