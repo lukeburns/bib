@@ -37,11 +37,13 @@ bib dois
 bib dois --update
 
 # Check for gaps
-basic status
 bib gaps
 
 # Export BibTeX of papers that have been cited at least 10 times by any paper in your bib file
 bib gaps --include-unused --min-citations 10 -q -e > gaps.bib
+
+# List citations missing from intro, but used later in the paper
+bib intro
 ```
 
 ## Acknowledgments

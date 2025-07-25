@@ -7,6 +7,7 @@ const CitationAnalyzer = require('../lib/citation-analyzer');
 const GapAnalyzer = require('../lib/gap-analyzer');
 const APICache = require('../lib/cache');
 const Config = require('../lib/config');
+const TexParser = require('../lib/tex-parser');
 
 const program = new Command();
 
@@ -78,39 +79,90 @@ program
     try {
       const { bibFile, texFile } = getFilePaths(options);
       const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const texParser = new TexParser(texFile);
+      const bibEntries = analyzer.getBibEntries();
       
-      let used = options.search 
-        ? analyzer.getUsedCitationsList().filter(entry => 
-            entry.key.toLowerCase().includes(options.search.toLowerCase()) ||
-            (entry.title && entry.title.toLowerCase().includes(options.search.toLowerCase())) ||
-            (entry.author && entry.author.toLowerCase().includes(options.search.toLowerCase()))
-          )
-        : analyzer.getUsedCitationsList();
+      // Get citations by section
+      const citationsBySection = texParser.extractCitationsBySection(fs.readFileSync(texFile, 'utf8'));
       
-      if (used.length === 0) {
+      // If searching, filter citations
+      let searchFilter = null;
+      if (options.search) {
+        searchFilter = (key) => {
+          const entry = bibEntries.get(key);
+          if (!entry) return false;
+          const cleanTitle = analyzer.cleanBibTexFormatting(entry.title || '');
+          const cleanAuthor = analyzer.cleanBibTexFormatting(entry.author || '');
+          return key.toLowerCase().includes(options.search.toLowerCase()) ||
+                 cleanTitle.toLowerCase().includes(options.search.toLowerCase()) ||
+                 cleanAuthor.toLowerCase().includes(options.search.toLowerCase());
+        };
+      }
+      
+      // Count total used citations (considering search filter)
+      let totalUsed = 0;
+      Object.values(citationsBySection).forEach(section => {
+        section.citations.forEach(cite => {
+          if (!searchFilter || searchFilter(cite)) {
+            totalUsed++;
+          }
+        });
+      });
+      
+      if (totalUsed === 0) {
         console.log(options.search ? 'No used citations found matching query.' : 'No used citations found.');
         return;
       }
       
-      if (options.keysOnly) {
-        used.forEach(entry => console.log(entry.key));
-      } else if (options.verbose) {
-        used.forEach(entry => {
-          console.log(`${entry.key}`);
-          console.log(`  Type: ${entry.type}`);
-          console.log(`  Title: ${entry.title || 'N/A'}`);
-          console.log(`  Author: ${entry.author || 'N/A'}`);
-          console.log(`  Year: ${entry.year || 'N/A'}`);
-          if (entry.doi) console.log(`  DOI: ${entry.doi}`);
+      console.log(`Used citations organized by section${options.search ? ` (matching "${options.search}")` : ''}:\n`);
+      
+      // Display citations by section
+      Object.entries(citationsBySection).forEach(([sectionNum, sectionData]) => {
+        const sectionCitations = Array.from(sectionData.citations).filter(cite => !searchFilter || searchFilter(cite));
+        
+        if (sectionCitations.length > 0) {
+          console.log(`[${sectionNum}] ${sectionData.title} (${sectionCitations.length} citations)`);
+          
+          if (options.keysOnly) {
+            sectionCitations.forEach(cite => console.log(`  ${cite}`));
+          } else if (options.verbose) {
+            sectionCitations.forEach(cite => {
+              const entry = bibEntries.get(cite);
+              if (entry) {
+                console.log(`  ${cite}`);
+                console.log(`    Type: ${entry.type}`);
+                console.log(`    Title: ${analyzer.cleanBibTexFormatting(entry.title || 'N/A')}`);
+                console.log(`    Author: ${analyzer.cleanBibTexFormatting(entry.author || 'N/A')}`);
+                console.log(`    Year: ${entry.year || 'N/A'}`);
+                if (entry.doi) console.log(`    DOI: ${entry.doi}`);
+                console.log('');
+              } else {
+                console.log(`  ${cite} - [Not found in bibliography]`);
+              }
+            });
+          } else {
+            // Default format: key - title
+            sectionCitations.forEach(cite => {
+              const entry = bibEntries.get(cite);
+              const title = entry?.title ? ` - ${analyzer.cleanBibTexFormatting(entry.title)}` : ' - [Not found in bibliography]';
+              console.log(`  ${cite}${title}`);
+            });
+          }
           console.log('');
+        }
+      });
+      
+      // Show summary
+      const uniqueCitations = new Set();
+      Object.values(citationsBySection).forEach(section => {
+        section.citations.forEach(cite => {
+          if (!searchFilter || searchFilter(cite)) {
+            uniqueCitations.add(cite);
+          }
         });
-      } else {
-        // Default format: key - title
-        used.forEach(entry => {
-          const title = entry.title ? ` - ${entry.title}` : '';
-          console.log(`${entry.key}${title}`);
-        });
-      }
+      });
+      
+      console.log(`Summary: ${uniqueCitations.size} unique citations used across ${Object.keys(citationsBySection).length} sections`);
       
     } catch (error) {
       console.error(`Error: ${error.message}`);
@@ -1184,6 +1236,83 @@ program
         console.log('  bib config --set-bib bibliography.bib');
         console.log('  bib config --set-tex paper.tex');
         console.log('  bib config --show-config');
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// intro command
+program
+  .command('intro')
+  .description('Check which citations are used in later sections but missing from introduction')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('-v, --verbose', 'show detailed section breakdown')
+  .action(async (options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const texParser = new TexParser(texFile);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      
+      console.log(`Analyzing citations in ${texFile}...\n`);
+      
+      const result = texParser.checkIntroductionCitations();
+      const { citationsBySection, introCitations, missingFromIntro } = result;
+      const bibEntries = analyzer.getBibEntries();
+      
+      // Show section breakdown if verbose
+      if (options.verbose) {
+        console.log('Citations by section:');
+        Object.entries(citationsBySection).forEach(([sectionNum, sectionData]) => {
+          console.log(`\n[${sectionNum}] ${sectionData.title}`);
+          const citations = Array.from(sectionData.citations);
+          if (citations.length === 0) {
+            console.log('  (no citations)');
+          } else {
+            citations.forEach(cite => {
+              const entry = bibEntries.get(cite);
+              const title = entry?.title ? analyzer.cleanBibTexFormatting(entry.title) : 'Unknown title';
+              console.log(`  - ${cite}: "${title}"`);
+            });
+          }
+        });
+        console.log('');
+      }
+      
+      // Summary
+      console.log('Summary:');
+      console.log(`  Introduction citations: ${introCitations.length}`);
+      console.log(`  Citations missing from introduction: ${missingFromIntro.length}`);
+      
+      if (missingFromIntro.length > 0) {
+        console.log('\nCitations used in later sections but missing from introduction:');
+        missingFromIntro.sort().forEach(cite => {
+          const entry = bibEntries.get(cite);
+          const title = entry?.title ? analyzer.cleanBibTexFormatting(entry.title) : 'Unknown title';
+          const authors = entry?.author ? analyzer.cleanBibTexFormatting(entry.author).split(' and ')[0] + 
+                          (entry.author.includes(' and ') ? ' et al' : '') : 'Unknown author';
+          const year = entry?.year || '????';
+          
+          console.log(`\n  ${cite}:`);
+          console.log(`    "${title}"`);
+          console.log(`    ${authors}, ${year}`);
+          
+          // Show which sections use this citation
+          const usedInSections = [];
+          Object.entries(citationsBySection).forEach(([sectionNum, sectionData]) => {
+            if (parseInt(sectionNum) > 1 && sectionData.citations.has(cite)) {
+              usedInSections.push(`${sectionNum}: ${sectionData.title}`);
+            }
+          });
+          console.log(`    Used in: ${usedInSections.join(', ')}`);
+        });
+        
+        console.log('\nConsider adding these citations to your introduction for completeness.');
+      } else {
+        console.log('\n✓ All citations are properly introduced in the introduction section.');
       }
       
     } catch (error) {
