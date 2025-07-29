@@ -1479,4 +1479,164 @@ program
     }
   });
 
+// ancestors command
+program
+  .command('ancestors <citations...>')
+  .description('Find papers cited by ALL of the specified citations (common ancestors)')
+  .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
+  .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
+  .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
+  .option('-e, --export', 'export results as BibTeX')
+  .option('-n, --number <number>', 'limit results to top N papers by citation count', '20')
+  .action(async (citations, options) => {
+    try {
+      const { bibFile, texFile } = getFilePaths(options);
+      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const GapAnalyzer = require('../lib/gap-analyzer');
+      const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
+      
+      console.log(`Finding papers cited by ALL of: ${citations.join(', ')}\n`);
+      
+      // First, check that all citations exist in the bibliography
+      const bibEntries = analyzer.getBibEntries();
+      const missingCitations = citations.filter(cite => !bibEntries.has(cite));
+      
+      if (missingCitations.length > 0) {
+        console.error(`Error: The following citations were not found in ${bibFile}:`);
+        missingCitations.forEach(cite => console.error(`  - ${cite}`));
+        console.error('\nPlease check your citation keys.');
+        process.exit(1);
+      }
+      
+      // Get references for each citation
+      const referencesMap = new Map();
+      
+      for (let i = 0; i < citations.length; i++) {
+        const cite = citations[i];
+        const entry = bibEntries.get(cite);
+        const title = analyzer.cleanBibTexFormatting(entry.title || '');
+        
+        console.log(`[${i + 1}/${citations.length}] Fetching references from "${cite}": ${title}...`);
+        
+        try {
+          const paper = await gapAnalyzer.semanticScholar.findPaper(entry);
+          
+          if (!paper) {
+            console.log(`  ⚠️  Could not find paper on Semantic Scholar`);
+            referencesMap.set(cite, new Set());
+            continue;
+          }
+          
+          // Get references of this paper
+          const references = paper.references || [];
+          
+          if (references.length === 0) {
+            console.log(`  No references found`);
+            referencesMap.set(cite, new Set());
+            continue;
+          }
+          
+          console.log(`  Found ${references.length} references`);
+          
+          // Store paper IDs in a Set for efficient intersection
+          const paperIdSet = new Set(references.map(r => r.paperId).filter(id => id != null));
+          referencesMap.set(cite, paperIdSet);
+          
+          // Also store the full reference data for later use
+          if (!gapAnalyzer.referenceData) {
+            gapAnalyzer.referenceData = new Map();
+          }
+          references.forEach(ref => {
+            if (ref.paperId) {
+              gapAnalyzer.referenceData.set(ref.paperId, ref);
+            }
+          });
+          
+        } catch (error) {
+          console.error(`  Error fetching references: ${error.message}`);
+          referencesMap.set(cite, new Set());
+        }
+      }
+      
+      // Find intersection - papers cited by ALL specified papers
+      let intersection = null;
+      
+      for (const [cite, paperIds] of referencesMap) {
+        if (intersection === null) {
+          intersection = new Set(paperIds);
+        } else {
+          // Keep only papers that are in both sets
+          intersection = new Set([...intersection].filter(id => paperIds.has(id)));
+        }
+        
+        if (intersection.size === 0) {
+          break; // No need to continue if intersection is empty
+        }
+      }
+      
+      console.log(`\nFound ${intersection.size} papers cited by all ${citations.length} specified papers`);
+      
+      if (intersection.size === 0) {
+        console.log('\nNo common ancestors found.');
+        return;
+      }
+      
+      // Get full paper data for intersection
+      const intersectionPapers = [];
+      for (const paperId of intersection) {
+        if (gapAnalyzer.referenceData && gapAnalyzer.referenceData.has(paperId)) {
+          intersectionPapers.push(gapAnalyzer.referenceData.get(paperId));
+        }
+      }
+      
+      // Sort by citation count
+      intersectionPapers.sort((a, b) => (b.citationCount || 0) - (a.citationCount || 0));
+      
+      // Limit results
+      const limit = parseInt(options.number);
+      const displayPapers = intersectionPapers.slice(0, limit);
+      
+      if (options.export) {
+        // Export as BibTeX
+        console.log('');
+        displayPapers.forEach((paper, index) => {
+          const suggestedKey = gapAnalyzer.generateSuggestedKey(paper);
+          const bibEntry = gapAnalyzer.generateBibTeX(paper, suggestedKey);
+          console.log(bibEntry);
+        });
+      } else {
+        // Display results
+        console.log('\nCommon ancestors (sorted by citation count):\n');
+        
+        displayPapers.forEach((paper, index) => {
+          const authors = paper.authors && paper.authors.length > 0
+            ? paper.authors.slice(0, 3).map(a => a.name).join(', ') + (paper.authors.length > 3 ? ' et al' : '')
+            : 'Unknown authors';
+          
+          console.log(`[${index + 1}] "${paper.title}"`);
+          console.log(`    Authors: ${authors}`);
+          console.log(`    Year: ${paper.year || 'Unknown'}`);
+          if (paper.journal && paper.journal.name) {
+            console.log(`    Journal: ${paper.journal.name}`);
+          }
+          console.log(`    Citations: ${paper.citationCount || 0}`);
+          if (paper.externalIds && paper.externalIds.DOI) {
+            console.log(`    DOI: https://doi.org/${paper.externalIds.DOI}`);
+          }
+          console.log('');
+        });
+        
+        if (intersectionPapers.length > limit) {
+          console.log(`... and ${intersectionPapers.length - limit} more. Use --number to see more results.`);
+        }
+        
+        console.log('\nTo export as BibTeX: bib ancestors ' + citations.join(' ') + ' -e');
+      }
+      
+    } catch (error) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 program.parse();

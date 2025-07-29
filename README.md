@@ -48,6 +48,10 @@ bib intro
 # Find intellectual progeny - papers that cite multiple specified citations
 bib progeny citation1 citation2 citation3
 bib progeny citation1 citation2 -e > papers_citing_both.bib
+
+# Find common ancestors - papers cited by multiple specified citations
+bib ancestors paper1 paper2 paper3
+bib ancestors paper1 paper2 -e > common_references.bib
 ```
 
 ## Acknowledgments
