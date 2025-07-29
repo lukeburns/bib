@@ -36,7 +36,7 @@ bib unused --sort-by-relevance
 bib dois
 bib dois --update
 
-# Check for gaps
+# Check for gaps - papers cited by your refs
 bib gaps
 
 # Export BibTeX of papers that have been cited at least 10 times by any paper in your bib file
@@ -44,6 +44,10 @@ bib gaps --include-unused --min-citations 10 -q -e > gaps.bib
 
 # List citations missing from intro, but used later in the paper
 bib intro
+
+# Find intellectual progeny - papers that cite multiple specified citations
+bib progeny citation1 citation2 citation3
+bib progeny citation1 citation2 -e > papers_citing_both.bib
 ```
 
 ## Acknowledgments
