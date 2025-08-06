@@ -13,7 +13,13 @@ const program = new Command();
 
 program
   .name('bib')
-  .description('Bib file utility')
+  .description(`Bibliography and citation analysis utility. Supports both citation keys and DOIs.
+
+Examples:
+  bib ancestors paper1 paper2                    # Find papers cited by both
+  bib ancestors 10.1000/example1 10.1000/example2   # Using DOIs (no .bib file needed)
+  bib progeny einstein1905 10.1038/nature123        # Mix citation keys and DOIs
+  bib gaps --priority 50                             # Find citation gaps with 50+ citations`)
   .version('1.0.0');
 
 // Helper function to find files
@@ -27,12 +33,15 @@ function findFile(fileName, searchPaths = ['.', '..']) {
   return null;
 }
 
-// Get file paths with defaults
-function getFilePaths(options) {
+// Get file paths with defaults - bib/tex files are optional if only DOIs are used
+function getFilePaths(options, citations = []) {
   // Load config defaults
   const config = new Config();
   const configBibName = config.get('defaultBibName');
   const configTexName = config.get('defaultTexName');
+  
+  // Check if all inputs are DOIs (then bib file is optional)
+  const allDOIs = citations && citations.length > 0 && citations.every(citation => isDOI(citation));
   
   // Priority: command line > find configured name > find default names
   let bibFile = options.bib;
@@ -53,17 +62,72 @@ function getFilePaths(options) {
     }
   }
   
-  if (!bibFile) {
+  if (!bibFile && !allDOIs) {
     console.error('Error: Could not find .bib file. Use --bib to specify path or set default with: bib config --set-bib <filename>');
+    console.error('Alternatively, you can use DOIs directly without a .bib file: bib ancestors 10.1000/example');
     process.exit(1);
   }
   
-  if (!texFile) {
+  if (!texFile && !allDOIs) {
     console.error('Error: Could not find .tex file. Use --tex to specify path or set default with: bib config --set-tex <filename>');
+    console.error('Note: .tex file is not required when using DOIs only.');
     process.exit(1);
   }
   
   return { bibFile, texFile };
+}
+
+/**
+ * Check if input string is a DOI
+ */
+function isDOI(input) {
+  // Match DOI patterns: 10.xxxx/yyyy or doi:10.xxxx/yyyy or https://doi.org/10.xxxx/yyyy
+  return /^(https?:\/\/(dx\.)?doi\.org\/)?(doi:)?10\.\d{4,}\/\S+/i.test(input);
+}
+
+/**
+ * Clean and normalize DOI
+ */
+function cleanDOI(input) {
+  // Remove common prefixes and clean up
+  return input
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+    .replace(/^doi:/i, '')
+    .trim();
+}
+
+/**
+ * Resolve input (citation key or DOI) to citation data
+ * Returns { type: 'key'|'doi', originalInput, resolvedData }
+ */
+async function resolveInput(input, bibEntries, semanticScholar) {
+  if (isDOI(input)) {
+    const cleanedDOI = cleanDOI(input);
+    const paperData = await semanticScholar.getPaperByDOI(cleanedDOI);
+    
+    if (!paperData) {
+      throw new Error(`Could not find paper with DOI: ${cleanedDOI}`);
+    }
+    
+    return {
+      type: 'doi',
+      originalInput: input,
+      cleanedDOI,
+      resolvedData: paperData
+    };
+  } else {
+    // Treat as citation key
+    const entry = bibEntries.get(input);
+    if (!entry) {
+      throw new Error(`Citation key '${input}' not found in bibliography`);
+    }
+    
+    return {
+      type: 'key',
+      originalInput: input,
+      resolvedData: entry
+    };
+  }
 }
 
 // used command  
@@ -1324,7 +1388,7 @@ program
 // progeny command
 program
   .command('progeny <citations...>')
-  .description('Find papers that cite ALL of the specified citations (intellectual progeny)')
+  .description('Find papers that cite ALL of the specified citations (accepts DOIs or citation keys)')
   .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
   .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
   .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
@@ -1332,40 +1396,62 @@ program
   .option('-n, --number <number>', 'limit results to top N papers by citation count', '20')
   .action(async (citations, options) => {
     try {
-      const { bibFile, texFile } = getFilePaths(options);
-      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const { bibFile, texFile } = getFilePaths(options, citations);
+      const analyzer = bibFile ? new CitationAnalyzer(bibFile, texFile) : null;
       const GapAnalyzer = require('../lib/gap-analyzer');
       const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
       
       console.log(`Finding papers that cite ALL of: ${citations.join(', ')}\n`);
       
-      // First, check that all citations exist in the bibliography
-      const bibEntries = analyzer.getBibEntries();
-      const missingCitations = citations.filter(cite => !bibEntries.has(cite));
+      // Resolve inputs (DOIs or citation keys) to paper data
+      const bibEntries = analyzer ? analyzer.getBibEntries() : new Map();
+      const resolvedInputs = [];
       
-      if (missingCitations.length > 0) {
-        console.error(`Error: The following citations were not found in ${bibFile}:`);
-        missingCitations.forEach(cite => console.error(`  - ${cite}`));
-        console.error('\nPlease check your citation keys.');
-        process.exit(1);
+      for (let i = 0; i < citations.length; i++) {
+        const input = citations[i];
+        console.log(`[${i + 1}/${citations.length}] Resolving: ${input}...`);
+        
+        try {
+          const resolved = await resolveInput(input, bibEntries, gapAnalyzer.semanticScholar);
+          resolvedInputs.push(resolved);
+          
+          if (resolved.type === 'doi') {
+            console.log(`  ✓ Found paper via DOI: ${resolved.resolvedData.title}`);
+          } else {
+            const title = analyzer ? analyzer.cleanBibTexFormatting(resolved.resolvedData.title || '') : resolved.resolvedData.title || '';
+            console.log(`  ✓ Found paper via citation key: ${title}`);
+          }
+        } catch (error) {
+          console.error(`  ✗ ${error.message}`);
+          process.exit(1);
+        }
       }
       
       // Get citing papers for each citation
       const citingPapersMap = new Map();
       
-      for (let i = 0; i < citations.length; i++) {
-        const cite = citations[i];
-        const entry = bibEntries.get(cite);
-        const title = analyzer.cleanBibTexFormatting(entry.title || '');
+      for (let i = 0; i < resolvedInputs.length; i++) {
+        const resolved = resolvedInputs[i];
+        const displayName = resolved.originalInput;
+        const title = resolved.type === 'doi' 
+          ? resolved.resolvedData.title 
+          : (analyzer ? analyzer.cleanBibTexFormatting(resolved.resolvedData.title || '') : resolved.resolvedData.title || '');
         
-        console.log(`[${i + 1}/${citations.length}] Fetching papers citing "${cite}": ${title}...`);
+        console.log(`[${i + 1}/${resolvedInputs.length}] Fetching papers citing "${displayName}": ${title}...`);
         
         try {
-          const paper = await gapAnalyzer.semanticScholar.findPaper(entry);
+          let paper;
+          if (resolved.type === 'doi') {
+            // For DOI inputs, we already have the paper data
+            paper = resolved.resolvedData;
+          } else {
+            // For citation keys, find the paper using the bib entry
+            paper = await gapAnalyzer.semanticScholar.findPaper(resolved.resolvedData);
+          }
           
           if (!paper) {
             console.log(`  ⚠️  Could not find paper on Semantic Scholar`);
-            citingPapersMap.set(cite, new Set());
+            citingPapersMap.set(displayName, new Set());
             continue;
           }
           
@@ -1374,7 +1460,7 @@ program
           
           if (!citingPapers || citingPapers.length === 0) {
             console.log(`  No citing papers found`);
-            citingPapersMap.set(cite, new Set());
+            citingPapersMap.set(displayName, new Set());
             continue;
           }
           
@@ -1382,7 +1468,7 @@ program
           
           // Store paper IDs in a Set for efficient intersection
           const paperIdSet = new Set(citingPapers.map(p => p.paperId));
-          citingPapersMap.set(cite, paperIdSet);
+          citingPapersMap.set(displayName, paperIdSet);
           
           // Also store the full paper data for later use
           if (!gapAnalyzer.citingPapersData) {
@@ -1394,7 +1480,7 @@ program
           
         } catch (error) {
           console.error(`  Error fetching citations: ${error.message}`);
-          citingPapersMap.set(cite, new Set());
+          citingPapersMap.set(displayName, new Set());
         }
       }
       
@@ -1414,7 +1500,7 @@ program
         }
       }
       
-      console.log(`\nFound ${intersection.size} papers citing all ${citations.length} specified citations`);
+      console.log(`\nFound ${intersection.size} papers citing all ${resolvedInputs.length} specified citations`);
       
       if (intersection.size === 0) {
         console.log('\nNo papers found that cite all specified citations.');
@@ -1470,7 +1556,7 @@ program
           console.log(`... and ${intersectionPapers.length - limit} more. Use --number to see more results.`);
         }
         
-        console.log('\nTo export as BibTeX: bib progeny ' + citations.join(' ') + ' -e');
+        console.log('\nTo export as BibTeX: bib progeny ' + resolvedInputs.map(r => r.originalInput).join(' ') + ' -e');
       }
       
     } catch (error) {
@@ -1482,7 +1568,7 @@ program
 // ancestors command
 program
   .command('ancestors <citations...>')
-  .description('Find papers cited by ALL of the specified citations (common ancestors)')
+  .description('Find papers cited by ALL of the specified citations (accepts DOIs or citation keys)')
   .option('-b, --bib <file>', 'path to .bib file (default: refs.bib)')
   .option('-t, --tex <file>', 'path to .tex file (default: main.tex)')
   .option('--api-key <key>', 'Semantic Scholar API key for authenticated requests')
@@ -1490,40 +1576,62 @@ program
   .option('-n, --number <number>', 'limit results to top N papers by citation count', '20')
   .action(async (citations, options) => {
     try {
-      const { bibFile, texFile } = getFilePaths(options);
-      const analyzer = new CitationAnalyzer(bibFile, texFile);
+      const { bibFile, texFile } = getFilePaths(options, citations);
+      const analyzer = bibFile ? new CitationAnalyzer(bibFile, texFile) : null;
       const GapAnalyzer = require('../lib/gap-analyzer');
       const gapAnalyzer = new GapAnalyzer(analyzer, options.apiKey);
       
       console.log(`Finding papers cited by ALL of: ${citations.join(', ')}\n`);
       
-      // First, check that all citations exist in the bibliography
-      const bibEntries = analyzer.getBibEntries();
-      const missingCitations = citations.filter(cite => !bibEntries.has(cite));
-      
-      if (missingCitations.length > 0) {
-        console.error(`Error: The following citations were not found in ${bibFile}:`);
-        missingCitations.forEach(cite => console.error(`  - ${cite}`));
-        console.error('\nPlease check your citation keys.');
-        process.exit(1);
-      }
-      
-      // Get references for each citation
-      const referencesMap = new Map();
+      // Resolve inputs (DOIs or citation keys) to paper data
+      const bibEntries = analyzer ? analyzer.getBibEntries() : new Map();
+      const resolvedInputs = [];
       
       for (let i = 0; i < citations.length; i++) {
-        const cite = citations[i];
-        const entry = bibEntries.get(cite);
-        const title = analyzer.cleanBibTexFormatting(entry.title || '');
-        
-        console.log(`[${i + 1}/${citations.length}] Fetching references from "${cite}": ${title}...`);
+        const input = citations[i];
+        console.log(`[${i + 1}/${citations.length}] Resolving: ${input}...`);
         
         try {
-          const paper = await gapAnalyzer.semanticScholar.findPaper(entry);
+          const resolved = await resolveInput(input, bibEntries, gapAnalyzer.semanticScholar);
+          resolvedInputs.push(resolved);
+          
+          if (resolved.type === 'doi') {
+            console.log(`  ✓ Found paper via DOI: ${resolved.resolvedData.title}`);
+          } else {
+            const title = analyzer ? analyzer.cleanBibTexFormatting(resolved.resolvedData.title || '') : resolved.resolvedData.title || '';
+            console.log(`  ✓ Found paper via citation key: ${title}`);
+          }
+        } catch (error) {
+          console.error(`  ✗ ${error.message}`);
+          process.exit(1);
+        }
+      }
+      
+      // Get references for each resolved input
+      const referencesMap = new Map();
+      
+      for (let i = 0; i < resolvedInputs.length; i++) {
+        const resolved = resolvedInputs[i];
+        const displayName = resolved.originalInput;
+        const title = resolved.type === 'doi' 
+          ? resolved.resolvedData.title 
+          : (analyzer ? analyzer.cleanBibTexFormatting(resolved.resolvedData.title || '') : resolved.resolvedData.title || '');
+        
+        console.log(`[${i + 1}/${resolvedInputs.length}] Fetching references from "${displayName}": ${title}...`);
+        
+        try {
+          let paper;
+          if (resolved.type === 'doi') {
+            // For DOI inputs, we already have the paper data
+            paper = resolved.resolvedData;
+          } else {
+            // For citation keys, find the paper using the bib entry
+            paper = await gapAnalyzer.semanticScholar.findPaper(resolved.resolvedData);
+          }
           
           if (!paper) {
             console.log(`  ⚠️  Could not find paper on Semantic Scholar`);
-            referencesMap.set(cite, new Set());
+            referencesMap.set(displayName, new Set());
             continue;
           }
           
@@ -1532,7 +1640,7 @@ program
           
           if (references.length === 0) {
             console.log(`  No references found`);
-            referencesMap.set(cite, new Set());
+            referencesMap.set(displayName, new Set());
             continue;
           }
           
@@ -1540,7 +1648,7 @@ program
           
           // Store paper IDs in a Set for efficient intersection
           const paperIdSet = new Set(references.map(r => r.paperId).filter(id => id != null));
-          referencesMap.set(cite, paperIdSet);
+          referencesMap.set(displayName, paperIdSet);
           
           // Also store the full reference data for later use
           if (!gapAnalyzer.referenceData) {
@@ -1554,7 +1662,7 @@ program
           
         } catch (error) {
           console.error(`  Error fetching references: ${error.message}`);
-          referencesMap.set(cite, new Set());
+          referencesMap.set(displayName, new Set());
         }
       }
       
@@ -1574,7 +1682,7 @@ program
         }
       }
       
-      console.log(`\nFound ${intersection.size} papers cited by all ${citations.length} specified papers`);
+      console.log(`\nFound ${intersection.size} papers cited by all ${resolvedInputs.length} specified papers`);
       
       if (intersection.size === 0) {
         console.log('\nNo common ancestors found.');
@@ -1630,7 +1738,7 @@ program
           console.log(`... and ${intersectionPapers.length - limit} more. Use --number to see more results.`);
         }
         
-        console.log('\nTo export as BibTeX: bib ancestors ' + citations.join(' ') + ' -e');
+        console.log('\nTo export as BibTeX: bib ancestors ' + resolvedInputs.map(r => r.originalInput).join(' ') + ' -e');
       }
       
     } catch (error) {
